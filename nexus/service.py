@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import re
 from datetime import date, datetime
 from pathlib import Path
 from typing import Callable
@@ -24,6 +25,7 @@ MESSAGES = {
     "already_lent": "この端末は現在貸出中です。別の端末を選択してください。",
     "inactive_employee": "貸出申請の権限がありません。",
     "past_due_date": "明日以降の日付を入力してください。",
+    "face_mark_not_allowed": "利用目的に顔文字・絵文字は使用できません。",
     "unavailable": "この端末は現在利用できません。別の端末を選択してください。",
     "not_found": "指定された端末または社員が見つかりません。",
     "loan_success": "{asset_no} を貸し出しました。返却予定日は {due_date} です。",
@@ -31,6 +33,28 @@ MESSAGES = {
     "return_denied": "この端末を返却する権限がありません。",
     "database_failure": "データの更新に失敗しました。入力内容は保存されていません。もう一度お試しください。",
 }
+
+
+EMOJI_RANGES = (
+    (0x1F000, 0x1FAFF),
+    (0x2600, 0x27BF),
+    (0x1F1E6, 0x1F1FF),
+)
+KAOMOJI_PATTERN = re.compile(
+    r"(?:\^[_-]?\^|[T;；][_ -]?[T;；]|[>＞][_ -]?[<＜]|"
+    r"[（(][^()（）\n]{0,12}(?:\^|ω|・|･|ಠ|◉|▽|д|Д|∀|＿|´|｀)[^()（）\n]{0,12}[）)]|"
+    r"[ಠ◉]|[・･][ωдД][・･]?)"
+)
+
+
+def contains_face_mark(value: str) -> bool:
+    if KAOMOJI_PATTERN.search(value):
+        return True
+    return any(
+        codepoint in (0x200D, 0x20E3, 0xFE0F)
+        or any(start <= codepoint <= end for start, end in EMOJI_RANGES)
+        for codepoint in map(ord, value)
+    )
 
 
 def _today(now: datetime | None = None) -> date:
@@ -78,6 +102,9 @@ def checkout(
     now: datetime | None = None,
     fail_after_lending: bool = False,
 ) -> str:
+    normalized_purpose = purpose.strip()
+    if contains_face_mark(normalized_purpose):
+        raise BusinessError(MESSAGES["face_mark_not_allowed"])
     try:
         requested_due_date = date.fromisoformat(due_date)
     except ValueError as error:
@@ -113,7 +140,7 @@ def checkout(
                     """INSERT INTO lendings
                        (device_id, user_id, lent_at, due_date, returned_at, purpose)
                        VALUES (?, ?, ?, ?, NULL, ?)""",
-                    (device_id, authenticated_user_id, timestamp, due_date, purpose.strip()),
+                    (device_id, authenticated_user_id, timestamp, due_date, normalized_purpose),
                 )
                 if fail_after_lending:
                     raise sqlite3.OperationalError("injected failure")
