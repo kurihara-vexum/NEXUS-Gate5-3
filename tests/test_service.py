@@ -58,6 +58,20 @@ class LendingServiceTest(unittest.TestCase):
             self.checkout(due_date="2026-09-26")
         self.assertEqual(dashboard(self.database, 1)["devices"][0]["status"], "AVAILABLE")
 
+    def test_emoji_in_purpose_is_rejected_without_saving(self) -> None:
+        with self.assertRaisesRegex(BusinessError, MESSAGES["face_mark_not_allowed"]):
+            self.checkout(purpose="社外打ち合わせ 😊")
+        with connect(self.database) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM lendings WHERE device_id = 1").fetchone()[0], 0)
+
+    def test_kaomoji_in_purpose_is_rejected_without_saving(self) -> None:
+        for value in ("動作確認 (^_^)", "調査中 (´・ω・`)", "確認 >_<"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(BusinessError, MESSAGES["face_mark_not_allowed"]):
+                    self.checkout(purpose=value)
+        with connect(self.database) as connection:
+            self.assertEqual(connection.execute("SELECT COUNT(*) FROM lendings WHERE device_id = 1").fetchone()[0], 0)
+
     def test_concurrent_checkout_creates_only_one_open_lending(self) -> None:
         def attempt(user_id: int) -> str:
             try:
